@@ -35,6 +35,10 @@ classdef line2d
         type = 'line'
     end
     
+    properties (Constant)
+        TOL = 1e-2;
+    end
+    
     % hidden properties for the implicit equation of a line
     properties (Hidden = true, Dependent = true)
         a
@@ -69,12 +73,18 @@ classdef line2d
                             error('only line types supported are line, segment, and ray')
                     end
                 end
-                if length(p1)~=2
-                    error('point 1 must be of length 2')
+                if size(p1,2)~=2
+                    error('point 1 must have 2 columns')
                 end
-                if length(p2)~=2
-                    error('point 2 must be of length 2')
+                if size(p2,2)~=2
+                    error('point 2 must have 2 columns')
                 end
+                % allow for a list of lines
+                N = size(p1,1);
+                if size(p2,1)~=N
+                    error('error. trying to create a list of line2d with different number of points')
+                end
+                % assign point 1 and point 2 to object
                 obj.point1 = p1;
                 obj.point2 = p2;
             else
@@ -85,29 +95,36 @@ classdef line2d
         % coefficients of implicit equation
         % ax + by + c = 0
         function a = get.a(obj)
-            a = obj.point1(2) - obj.point2(2);
+            a = obj.point1(:,2) - obj.point2(:,2);
         end
         function b = get.b(obj)
-            b = obj.point2(1) - obj.point1(1);
+            b = obj.point2(:,1) - obj.point1(:,1);
         end
         function c = get.c(obj)
-            c = obj.point1(1) * obj.point2(2) - ...
-                obj.point2(1) * obj.point1(2);
+            c = obj.point1(:,1) .* obj.point2(:,2) - ...
+                obj.point2(:,1) .* obj.point1(:,2);
         end
         function n = get.n(obj)
             % normalization factor
-            n = sqrt(obj.a^2 + obj.b^2);
+            n = sqrt(obj.a.^2 + obj.b.^2);
         end
     
+        % convert line to a vector
+        function vec = toVector(obj)
+            vec = obj.point2 - obj.point1;
+        end
+        
         % get length of line segment
         function len = length(obj)
-            len = norm(toVector(obj));
+            vec = toVector(obj);
+            len = sqrt(vec(:,1).^2+vec(:,2).^2);
         end
         
         % get angle of line in radians
         function ang = angleRad(obj)
             vec = toVector(obj);
-            ang = atan2(vec(2),vec(1));
+            vec = vec./norm(vec); %normalize the vector
+            ang = atan2(vec(:,2),vec(:,1));
         end
         
         % get angle of line in degrees
@@ -124,12 +141,16 @@ classdef line2d
         
         % rotate line about it's start point in radians
         function obj = rotateRad(obj,theta)
+            len = length(obj);
             vec = toVector(obj);
+            vec = vec./len; % normalize
             c = cos(theta);
             s = sin(theta);
-            R = [c -s; s c];
-            vp = R * vec';
-            obj.point2 = vp' + obj.point1;
+%             R = [c -s; s c];
+%             vp = R * vec';
+            vecrot = [c.*vec(:,1)-s.*vec(:,2) s.*vec(:,1)+c.*vec(:,2)];
+            vecrot = vecrot .* len; % denormalize
+            obj.point2 = vecrot + obj.point1;
         end
         
         % rotate line about it's start point in degrees
@@ -147,17 +168,18 @@ classdef line2d
             obj = flipDirection(rotateDeg(flipDirection(obj),theta));
         end
         
-        % convert line to a vector
-        function vec = toVector(obj)
-            vec = obj.point2 - obj.point1;
+        % translate the line by a vector offset
+        function obj = translate(obj,offset)
+            obj.point1 = obj.point1 + offset;
+            obj.point2 = obj.point2 + offset;
         end
         
         % what side of a line does a point fall?
         % positive if to the left (CCW)
         % negative if to the right (CW)
         function s = side(obj,point)
-            cp = ((obj.point2(1) - obj.point1(1))*(point(2) - obj.point1(2)) - ...
-                (obj.point2(2) - obj.point1(2))*(point(1) - obj.point1(1)));
+            cp = ((obj.point2(:,1) - obj.point1(:,1)).*(point(:,2) - obj.point1(:,2)) - ...
+                (obj.point2(:,2) - obj.point1(:,2)).*(point(:,1) - obj.point1(:,1)));
             s = sign(cp);
         end
                 
@@ -169,23 +191,23 @@ classdef line2d
         function pline = intersectionPerp(obj,point1)
             vec = obj.toVector;
             perp = fliplr(vec);
-            perp(1) = -1*perp(1);
+            perp(:,1) = -1*perp(:,1);
             point2 = point1 + perp;
-            num = (point1(2)-obj.point1(2)) * vec(1) - ...
-                (point1(1)-obj.point1(1)) * vec(2);
-            den = (point2(1)-point1(1)) * vec(2) - ...
-                (point2(2)-point1(2)) * vec(1);
-            if abs(den)<1e-6
+            num = (point1(:,2)-obj.point1(:,2)) .* vec(:,1) - ...
+                (point1(:,1)-obj.point1(:,1)) .* vec(:,2);
+            den = (point2(:,1)-point1(:,1)) .* vec(:,2) - ...
+                (point2(:,2)-point1(:,2)) .* vec(:,1);
+            if any(abs(den)<1e-3)
                 error('lines should not be parallel')
             end
-            r = num / den;
-            pointI = point1 + r*(point2-point1);
+            r = num ./ den;
+            pointI = point1 + r.*(point2-point1);
             pline = line2d(point1,pointI);
         end
         
         % find a point on a line parametrically starting from point 1
         function point = getPoint(obj,p)
-            point = obj.point1 + p*obj.toVector;
+            point = obj.point1 + p.*obj.toVector;
         end
         
         % find the distance between two points of parametric lines given
@@ -194,8 +216,8 @@ classdef line2d
             if ~isa(line,'line2d')
                 error('must supply line2d object as input')
             end
-            point1 = obj.point1 + p*obj.toVector;
-            point2 = line.point1 + p*line.toVector;
+            point1 = obj.point1 + p.*obj.toVector;
+            point2 = line.point1 + p.*line.toVector;
             dline = line2d(point1,point2);
             dist = dline.length;
         end
@@ -205,7 +227,7 @@ classdef line2d
             switch obj.type
                 case 'line'
                     dist = distPointToLine(obj,point);
-                    endp = NaN;
+                    endp = NaN(size(point));
                 case 'segment'
                     [dist,endp] = distPointToSegment(obj,point);
                 case 'ray'
@@ -217,45 +239,60 @@ classdef line2d
         
         % perpendicular distance from a point to a line
         function dist = distPointToLine(obj,point)
-            dist = abs(obj.a * point(1) + obj.b * point(2)  + obj.c) / obj.n;
+            dist = abs(obj.a .* point(:,1) + obj.b .* point(:,2)  + obj.c) ./ obj.n;
         end
         
         % distance from a point to a ray
         function [dist,endp] = distPointToRay(obj,point)
-            v = [obj.point2(1)-obj.point1(1) obj.point2(2)-obj.point1(2)];
-            w = [point(1)-obj.point1(1) point(2)-obj.point1(2)];
-            c1 = dot(w,v);
-            if ( c1 <= 0 ) % point is beyond point 1 of line
-                dist = norm(obj.point1-point);
-                endp = obj.point1;
-            else % point's projection falls on line segment
-                dist = distPointToLine(obj,point);
-                endp = NaN;
-            end
+            v = [obj.point2(:,1)-obj.point1(:,1) obj.point2(:,2)-obj.point1(:,2)];
+            w = [point(:,1)-obj.point1(:,1) point(:,2)-obj.point1(:,2)];
+%             c1 = dot(w,v);
+            c1 = w(:,1).*v(:,1) + w(:,2).*v(:,2);
+            isBeyondEnd = c1<=0;
+            % point's projection falls on line segment
+            dist = distPointToLine(obj,point);
+            endp = NaN(size(point));
+            % point is beyond point 1 of line
+            vec = obj.point1-point;
+            dist2 = sqrt(vec(:,1).^2+vec(:,2).^2);
+            endp2 = obj.point1;
+            % assign appropriate value(s) for dist and endp
+            dist(isBeyondEnd) = dist2(isBeyondEnd);
+            endp(isBeyondEnd,:) = endp2(isBeyondEnd,:);
         end
         
         % distance from a point to a line segment
         function [dist,endp] = distPointToSegment(obj,point)
-            v = [obj.point2(1)-obj.point1(1) obj.point2(2)-obj.point1(2)];
-            w = [point(1)-obj.point1(1) point(2)-obj.point1(2)];
-            c1 = dot(w,v);
-            c2 = dot(v,v);
-            if ( c1 <= 0 ) % point is beyond point 1 of line
-                dist = norm(obj.point1-point);
-                endp = obj.point1;
-            elseif ( c2 <= c1 ) % point is beyond point 2 of line
-                dist = norm(obj.point2-point);
-                endp = obj.point2;
-            else % point's projection falls on line segment
-                dist = distPointToLine(obj,point);
-                endp = NaN;
-            end
+            v = [obj.point2(:,1)-obj.point1(:,1) obj.point2(:,2)-obj.point1(:,2)];
+            w = [point(:,1)-obj.point1(:,1) point(:,2)-obj.point1(:,2)];
+%             c1 = dot(w,v);
+            c1 = w(:,1).*v(:,1) + w(:,2).*v(:,2);
+            isBeyondEnd1 = c1<=0;
+%             c2 = dot(v,v);
+            c2 = v(:,1).^2 + v(:,2).^2;
+            isBeyondEnd2 = c2<=c1;
+            % point's projection falls on line segment
+            dist = distPointToLine(obj,point);
+            endp = NaN(size(point));
+            % point is beyond point 1 of line
+            vec = obj.point1-point;
+            dist1 = sqrt(vec(:,1).^2+vec(:,2).^2);
+            endp1 = obj.point1;
+            % point is beyond point 2 of line
+            vec = obj.point2-point;
+            dist2 = sqrt(vec(:,1).^2+vec(:,2).^2);
+            endp2 = obj.point2;
+            % assign appropriate value(s) for dist and endp
+            dist(isBeyondEnd2) = dist2(isBeyondEnd2);
+            endp(isBeyondEnd2,:) = endp2(isBeyondEnd2,:);
+            dist(isBeyondEnd1) = dist1(isBeyondEnd1);
+            endp(isBeyondEnd1,:) = endp1(isBeyondEnd1,:);
         end 
         
         % plot a line, showing a square at point 1 and a star at point 2
         function plot(obj,varargin)
-            plot([obj.point1(1); obj.point2(1)], ...
-                [obj.point1(2); obj.point2(2)],varargin{:}, ...
+            plot([obj.point1(:,1); obj.point2(:,1)], ...
+                [obj.point1(:,2); obj.point2(:,2)],varargin{:}, ...
                 obj.point1(1),obj.point1(2),'gs', ...
                 obj.point2(1),obj.point2(2),'g*')
         end
@@ -263,7 +300,7 @@ classdef line2d
         % plot a line up to a point that is specified parametrically
         function plotpp(obj,p,varargin)
             v = obj.toVector;
-            point = obj.point1 + p*v;
+            point = obj.point1 + p.*v;
             plot(point(1),point(2),varargin{:})
         end
     end
@@ -275,8 +312,9 @@ classdef line2d
             if ~isa(line1,'line2d') || ~isa(line2,'line2d')
                 error('must supply line2d objects as input')
             end
-            ang = acos(dot(toVector(line1),toVector(line2)) / ...
-                (line1.length*line2.length));
+            vec1 = line1.toVector;
+            vec2 = line2.toVector;
+            ang = real( acos( dot(vec1./norm(vec1),vec2./norm(vec2)) ) );
         end
         
         % angle between lines in degrees
@@ -292,7 +330,7 @@ classdef line2d
             if ~isa(line1,'line2d') || ~isa(line2,'line2d')
                 error('must supply line2d objects as input')
             end
-            samedir = abs(line2d.angleIncludedRad(line1,line2))<1e-6;
+            samedir = abs(line2d.angleIncludedRad(line1,line2))<line2d.TOL;
         end
         
         % are lines parallel?
@@ -300,7 +338,7 @@ classdef line2d
             if ~isa(line1,'line2d') || ~isa(line2,'line2d')
                 error('must supply line2d objects as input')
             end
-            parallel = line2d.compareDirection(line1,line2) || ...
+            parallel = line2d.compareDirection(line1,line2) | ...
                 line2d.compareDirection(flipDirection(line1),line2);
         end
         

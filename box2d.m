@@ -37,11 +37,20 @@ classdef box2d
         c3
         c4
         center
+        poi
         velocity = [0 0];
+    end
+    
+    properties (Hidden)
+        usepoi = false;
     end
     
     properties (Dependent)
         angle
+    end
+    
+    properties (Constant)
+        TOL = 0.03;
     end
     
     properties (Hidden, Dependent)
@@ -74,12 +83,21 @@ classdef box2d
                     obj.c3 = [xmin ymax];
                     obj.c4 = [xmax ymax];
                     obj.center = [(xmin+xmax)/2 (ymin+ymax)/2];
+                    obj.poi = obj.center;
                 end
             else
                 % empty object
             end
         end
                 
+        % set a point of interest (poi) relative to the center of the box
+        % set the usepoi property so that rotations will take place with
+        % respect to the poi rather than the center
+        function obj = setpoi(obj,rp)
+            obj.poi = obj.center + rp;
+            obj.usepoi = true;
+        end
+        
         % getter for side, returned as a line2d segment
         function side12 = get.side12(obj)
             side12 = line2d(obj.c1,obj.c2,'segment');
@@ -201,19 +219,26 @@ classdef box2d
             end
         end
         
-        % rotate the box around its center by angle theta radians
+        % rotate the box around its center or poi by angle theta radians
         function obj = rotateRad(obj,theta)
-            cc1 = line2d(obj.center,obj.c1).rotateRad(theta);
-            cc2 = line2d(obj.center,obj.c2).rotateRad(theta);
-            cc3 = line2d(obj.center,obj.c3).rotateRad(theta);
-            cc4 = line2d(obj.center,obj.c4).rotateRad(theta);
+            if obj.usepoi
+                cc1 = line2d(obj.poi,obj.c1).rotateRad(theta);
+                cc2 = line2d(obj.poi,obj.c2).rotateRad(theta);
+                cc3 = line2d(obj.poi,obj.c3).rotateRad(theta);
+                cc4 = line2d(obj.poi,obj.c4).rotateRad(theta);
+            else
+                cc1 = line2d(obj.center,obj.c1).rotateRad(theta);
+                cc2 = line2d(obj.center,obj.c2).rotateRad(theta);
+                cc3 = line2d(obj.center,obj.c3).rotateRad(theta);
+                cc4 = line2d(obj.center,obj.c4).rotateRad(theta);
+            end
             obj.c1 = cc1.point2;
             obj.c2 = cc2.point2;
             obj.c3 = cc3.point2;
             obj.c4 = cc4.point2;
         end
         
-        % rotate the box around its center by angle theta degrees
+        % rotate the box around its center or poi by angle theta degrees
         function obj = rotateDeg(obj,theta)
             obj = rotateRad(obj,theta*pi/180);
         end
@@ -236,8 +261,11 @@ classdef box2d
             Y = [obj.c1(2) obj.c2(2) obj.c3(2) obj.c4(2) obj.c1(2)]';
             plot(X,Y,varargin{:})
             hold on
-            plot(obj.center(1),obj.center(2),'o')
-            plot(obj.c1(1),obj.c1(2),'o')
+            plot(obj.center(1),obj.center(2),'.')
+            if obj.usepoi
+                plot(obj.poi(1),obj.poi(2),'s')
+            end
+            plot(obj.c1(1),obj.c1(2),'.')
             axis equal
         end
     end
@@ -255,10 +283,9 @@ classdef box2d
             if ~isa(box1,'box2d') || ~isa(box2,'box2d')
                 error('must supply box2d objects as input')
             end
-            if nargin<2
+            if nargin<3
                 show = false;
             end
-            TOL = 1e-3; % testing for parallel sides needs a tolerance
             distv = NaN(1,20); % initialize distance vector
             sideofv = NaN(1,20); % initialize sideof vector
             obj1 = cell(1,20); % initialize object 1 cell array
@@ -301,13 +328,13 @@ classdef box2d
             % keep track of relative location of caliper 2 to caliper 1
             sideofv(count) = side(caliper1,caliper2.point1);
             if show
-                Newfigure('box2d: distance');
+                NewFigure('box2d: distance');
                 plot(box1)
                 plot(caliper1,'r')
                 hold on
                 plot(box2)
                 plot(caliper2,'r')
-                pause(2)
+%                 pause(2)
             end
             % begin loop to rotate calipers around boxes
             while true
@@ -318,9 +345,9 @@ classdef box2d
                 % as well as the relative location
                 ang1 = line2d.angleIncludedDeg(side1,caliper1);
                 ang2 = line2d.angleIncludedDeg(side2,caliper2);
-                if abs(ang1-ang2)<TOL % calipers are on parallel sides
+                if abs(ang1-ang2)<box2d.TOL % calipers are on parallel sides
                     if show, disp('parallel'), end
-                    if ang1<TOL % caliper is on a side
+                    if ang1<box2d.TOL % caliper is on a side
                         % update side 1
                         Ic1 = Ic1 + 1;
                         if Ic1>4
@@ -341,7 +368,7 @@ classdef box2d
                     dist = line2d.distSegmentToSegmentParallel(caliper1,caliper2);
                     obj1{count} = caliper1;
                     obj2{count} = caliper2;
-                elseif ang1<TOL % caliper 1 is on a side
+                elseif ang1<box2d.TOL % caliper 1 is on a side
                     if show, disp('caliper 1 on a side, move caliper 2 to next side'), end
                     caliper1 = caliper1.flipDirection.rotateDeg(180-ang2);
                     caliper2 = side2;
@@ -354,7 +381,7 @@ classdef box2d
                         Ic1 = 1;
                     end
                     side1 = box1.getSide(Ic1);
-                elseif ang2<TOL % caliper 2 is on a side
+                elseif ang2<box2d.TOL % caliper 2 is on a side
                     if show, disp('caliper 2 on a side, move caliper 1 to next side'), end
                     caliper1 = side1;
                     caliper2 = caliper2.flipDirection.rotateDeg(180-ang1);
@@ -386,16 +413,16 @@ classdef box2d
                 end
                 % plot boxes if show is true
                 if show
-                    Newfigure('box2d: distance');
+                    NewFigure('box2d: distance');
                     plot(box1)
                     plot(caliper1,'r')
                     hold on
                     plot(box2)
                     plot(caliper2,'r')
-                    pause(2)
+%                     pause(2)
                 end
                 % calipers should always be parallel to each other
-                if ~line2d.parallel(caliper1,caliper2)
+                if ~line2d.parallel(caliper1,caliper2)                   
                     error('box2d: calipers not parallel!')
                 end
                 % add distance to its vector
@@ -467,8 +494,164 @@ classdef box2d
                     dline = line2d(ends{1},ends{2});
                 end
                 plot(dline,'k')
-                pause(5)
+%                 pause(5)
             end
         end
+        
+        % find critical support lines between two box2ds
+        function csl = criticalSupportLines(box1,box2,show)
+            if ~isa(box1,'box2d') || ~isa(box2,'box2d')
+                error('must supply box2d objects as input')
+            end
+            if nargin<3
+                show = false;
+            end
+            box2d.TOL = 0.03; % testing for parallel sides needs a tolerance
+            count = 1; % initialize count
+            % initialize caliper on first box at minimum Y point
+            [c1,Ic1] = minY(box1);
+            Ic1prev = Ic1 - 1;
+            if Ic1prev<1, Ic1prev=4; end
+            Ic1next = Ic1 + 1;
+            if Ic1next>4, Ic1next=1; end
+            side1 = box1.getSide(Ic1);
+            side1_init = side1;
+            caliper1 = line2d(c1,c1-[1 0],'segment');
+            % initialize caliper on second box at maximum Y point
+            [c2,Ic2] = maxY(box2);
+            Ic2prev = Ic2 - 1;
+            if Ic2prev<1, Ic2prev=4; end
+            Ic2next = Ic2 + 1;
+            if Ic2next>4, Ic2next=1; end
+            side2 = box2.getSide(Ic2);
+            side2_init = side2;
+            caliper2 = line2d(c2,c2+[1 0],'segment');
+            % initialize line between calipers and test for csl
+            csl = [];
+            line = line2d(c1,c2,'line');
+            s1 = [side(line,box1.getCorner(Ic1prev)) side(line,box1.getCorner(Ic1next))];
+            s2 = [side(line,box2.getCorner(Ic2prev)) side(line,box2.getCorner(Ic2next))];
+            if (s1(1)*s1(2)>0) && (s2(1)*s2(2)>0) && (s1(1)*s2(1)<0)
+                csl = [csl line];
+            end
+            % plot the box if show is true
+            if show
+                NewFigure('box2d: csl');
+                plot(box1)
+                plot(caliper1,'r')
+                hold on
+                plot(box2)
+                plot(caliper2,'r')
+%                 pause(2)
+            end
+            % begin loop to rotate calipers around boxes
+            while true
+                count = count + 1;
+                % find the next side encountered by rotating caliper CW
+                % assume the included angle is acute
+                % and calculate the distance between calipers
+                % as well as the relative location
+                ang1 = line2d.angleIncludedDeg(side1,caliper1);
+                ang2 = line2d.angleIncludedDeg(side2,caliper2);
+                if abs(ang1-ang2)<box2d.TOL % calipers are on parallel sides
+                    if show, disp('parallel'), end
+                    if ang1<box2d.TOL % caliper is on a side
+                        % update side 1
+                        Ic1 = Ic1 + 1;
+                        if Ic1>4
+                            Ic1 = 1;
+                        end
+                        side1 = box1.getSide(Ic1);
+                        % update side 2
+                        Ic2 = Ic2 + 1;
+                        if Ic2>4
+                            Ic2 = 1;
+                        end
+                        side2 = box2.getSide(Ic2);
+                    end
+                    % move calipers to current sides
+                    caliper1 = side1;
+                    caliper2 = side2;
+                elseif ang1<box2d.TOL % caliper 1 is on a side
+                    if show, disp('caliper 1 on a side, move caliper 2 to next side'), end
+                    caliper1 = caliper1.flipDirection.rotateDeg(180-ang2);
+                    caliper2 = side2;
+                    % update side 1
+                    Ic1 = Ic1 + 1;
+                    if Ic1>4
+                        Ic1 = 1;
+                    end
+                    side1 = box1.getSide(Ic1);
+                elseif ang2<box2d.TOL % caliper 2 is on a side
+                    if show, disp('caliper 2 on a side, move caliper 1 to next side'), end
+                    caliper1 = side1;
+                    caliper2 = caliper2.flipDirection.rotateDeg(180-ang1);
+                    % update side 2
+                    Ic2 = Ic2 + 1;
+                    if Ic2>4
+                        Ic2 = 1;
+                    end
+                    side2 = box2.getSide(Ic2);
+                elseif ang1<ang2 % caliper 1 is closer to next side
+                    if show, disp('caliper 1 next'), end
+                    caliper1 = side1;
+                    caliper2 = caliper2.rotateDeg(-ang1);
+                elseif ang1>ang2 % caliper 2 is closer to next side
+                    if show, disp('caliper 2 next'), end
+                    caliper1 = caliper1.rotateDeg(-ang2);
+                    caliper2 = side2;
+                else % whoops, unexpected condition!
+                    keyboard
+                end
+                % update prev & next corners, line, and test for csl
+                Ic1prev = Ic1 - 1;
+                if Ic1prev<1, Ic1prev=4; end
+                Ic1next = Ic1 + 1;
+                if Ic1next>4, Ic1next=1; end
+                Ic2prev = Ic2 - 1;
+                if Ic2prev<1, Ic2prev=4; end
+                Ic2next = Ic2 + 1;
+                if Ic2next>4, Ic2next=1; end
+                line = line2d(box1.getCorner(Ic1),box2.getCorner(Ic2),'line');
+                s1 = [side(line,box1.getCorner(Ic1prev)) side(line,box1.getCorner(Ic1next))];
+                s2 = [side(line,box2.getCorner(Ic2prev)) side(line,box2.getCorner(Ic2next))];
+                if (s1(1)*s1(2)>0) && (s2(1)*s2(2)>0) && (s1(1)*s2(1)<0)
+                    if max(size(csl))==1
+                        if ~line2d.parallel(csl(1),line)
+                            csl = [csl line];
+                        end
+                    else
+                        csl = [csl line];
+                    end
+                end
+                % plot boxes if show is true
+                if show
+                    NewFigure('box2d: csl');
+                    plot(box1)
+                    plot(caliper1,'r')
+                    hold on
+                    plot(box2)
+                    plot(caliper2,'r')
+                    plot(line,'y')
+                    try
+                    for i = 1:max(size(csl))
+                        plot(csl(i),'c')
+                    end
+                    catch
+                        keyboard
+                    end
+%                     pause(2)
+                end
+                % calipers should always be parallel to each other
+                if ~line2d.parallel(caliper1,caliper2)
+                    error('box2d: calipers not parallel!')
+                end
+                % test for passing initial conditions
+                if max(size(csl))==2
+                    if show, disp('two critical support lines found. done.'), end
+                    break
+                end
+            end
+        end        
     end
 end
