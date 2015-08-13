@@ -32,625 +32,366 @@
 classdef box2d
     % class properties
     properties
+        length
+        width
+        refoffset
+        reference
+        angleDeg
+    end
+            
+    properties (Dependent)
+        center
+        angleRad
+    end
+    
+    properties (Hidden)
+        % hypotenuse
+        hypo1
+        hypo2
+        hypo3
+        hypo4
+        % corners
         c1
         c2
         c3
         c4
-        center
-        poi
-        velocity = [0 0];
-    end
-    
-    properties (Hidden)
-        usepoi = false;
-    end
-    
-    properties (Dependent)
-        angle
-    end
-    
-    properties (Constant)
-        TOL = 0.03;
-    end
-    
-    properties (Hidden, Dependent)
+        % sides
         side12
         side23
         side34
         side41
     end
+        
+    properties (Constant, Hidden)
+        TOL = 0.03;
+    end
     
     % class methods
     methods
-        % constructor takes two points that are interpreted to be any two
-        % opposite corners of the box.  If the two points are on a vertical
-        % or horizontal line then an error is thrown.  The initial box has
-        % orientation 0 degrees.
-        function obj = box2d(p1,p2)
+        % box2d constructor requires length and width parameters.  an
+        % optional argument is the offset from the center of the box to the
+        % refernce point
+        function obj = box2d(length,width,refoffset)
             if nargin>0
-                if nargin<2
-                    error('must supply 2 points for a line')
+                obj.length = length;
+                obj.width = width;
+                if nargin<3
+                    obj.refoffset = [0 0];
                 else
-                    if p1(1)==p2(1) || p1(2)==p2(2)
-                        error('x and y coordinates of points must be distinct')
-                    end
-                    xmin = min([p1(1) p2(1)]);
-                    xmax = max([p1(1) p2(1)]);
-                    ymin = min([p1(2) p2(2)]);
-                    ymax = max([p1(2) p2(2)]);
-                    obj.c1 = [xmax ymin];
-                    obj.c2 = [xmin ymin];
-                    obj.c3 = [xmin ymax];
-                    obj.c4 = [xmax ymax];
-                    obj.center = [(xmin+xmax)/2 (ymin+ymax)/2];
-                    obj.poi = obj.center;
+                    obj.refoffset = refoffset;
                 end
             else
                 % empty object
             end
         end
-                
-        % set a point of interest (poi) relative to the center of the box
-        % set the usepoi property so that rotations will take place with
-        % respect to the poi rather than the center
-        function obj = setpoi(obj,rp)
-            obj.poi = obj.center + rp;
-            obj.usepoi = true;
-        end
-        
-        % getter for side, returned as a line2d segment
-        function side12 = get.side12(obj)
-            side12 = line2d(obj.c1,obj.c2,'segment');
-        end
-        
-        % getter for side, returned as a line2d segment
-        function side23 = get.side23(obj)
-            side23 = line2d(obj.c2,obj.c3,'segment');
-        end
-        
-        % getter for side, returned as a line2d segment
-        function side34 = get.side34(obj)
-            side34 = line2d(obj.c3,obj.c4,'segment');
-        end
-        
-        % getter for side, returned as a line2d segment
-        function side41 = get.side41(obj)
-            side41 = line2d(obj.c4,obj.c1,'segment');
-        end
 
-        % getter for angle, returned in degrees
-        function angle = get.angle(obj)
-            angle = obj.side34.angleDeg;
+        % set the reference point of the box.  it may be at the center or
+        % offset from the center, depending on the value of the refoffset.
+        % the angle and reference point may both be arrays, but they need 
+        % to have the same dimension
+        function obj = setreference(obj,point)
+            obj.reference = point;
+            if isempty(obj.angleDeg)
+                return
+            end
+            % the size of the reference point must be the same as the size
+            % of the angle.  both can be arrays
+            n1 = size(point,1);
+            n2 = size(obj.angleDeg,1);
+            if n1==n2
+                return
+            end
+            if n1>1 && n2>1
+                error('number of reference points and angles incompatible')
+            end
+            if n1==1
+                obj.reference = repmat(point,n2,1);
+            elseif n2==1
+                obj.angleDeg = repmat(obj.angleDeg,n1,1);
+            end
+        end
+        
+        % set the orientation of the box in radians.  the angle and
+        % reference point may both be arrays, but they need to have the
+        % same dimension
+        function obj = setangleDeg(obj,angleDeg)
+            obj.angleDeg = angleDeg;
+            if isempty(obj.reference)
+                return
+            end
+            % the size of the angle must be the same as the size of the
+            % reference point.  both can be arrays
+            n1 = size(angleDeg,1);
+            n2 = size(obj.reference,1);
+            if n1==n2
+                return
+            end
+            if n1>1 && n2>1
+                error('number of angles and reference points incompatible')
+            end
+            if n1==1
+                obj.angleDeg = repmat(angleDeg,n2,1);
+            elseif n2==1
+                obj.reference = repmat(obj.reference,n1,1);
+            end
+        end
+        
+        % get a subset of the object
+        function one = getone(obj,idx)
+            if idx>size(obj.reference,1)
+                error('index greater than object count')
+            end
+            one = box2d(obj.length,obj.width,obj.refoffset);
+            one = one.setreference(obj.reference(idx,:));
+            one = one.setangleDeg(obj.angleDeg(idx,:));
+            one = one.update;
+        end
+        
+        % translate the box by some offset to a new location
+        % if update has been called, it will need to be re-called after
+        % this
+        function obj = translate(obj,offset)
+            obj.reference(:,1) = obj.reference(:,1) + offset(:,1);
+            obj.reference(:,2) = obj.reference(:,2) + offset(:,2);
+        end
+        
+        % dependent getter for the center property.  The center location
+        % depends on the reference point and the refoffset property
+        function center = get.center(obj)
+            if isempty(obj.angleDeg)
+                center(:,1) = obj.reference(:,1) - obj.refoffset(:,1);
+                center(:,2) = obj.reference(:,2) - obj.refoffset(:,2);
+            else
+                center(:,1) = obj.reference(:,1) - ...
+                    obj.refoffset(:,1).*cos(obj.angleRad) + ...
+                    obj.refoffset(:,2).*sin(obj.angleRad);
+                center(:,2) = obj.reference(:,2) - ...
+                    obj.refoffset(:,2).*cos(obj.angleRad) - ...
+                    obj.refoffset(:,1).*sin(obj.angleRad);
+            end
+        end
+        
+        % dependent getter for the angle in radians
+        function angleRad = get.angleRad(obj)
+            angleRad = obj.angleDeg*pi/180;
+        end
+        
+        function obj = update(obj)
+            obj = obj.setHypotenuses;
+            obj = obj.setCorners;
+            obj = obj.setSides;
+        end
+        
+        function obj = setHypotenuses(obj)
+            % hypotenuse 1
+            x = obj.length/2 - obj.refoffset(1);
+            y = -obj.width/2 - obj.refoffset(2);
+            hypo1 = line2d(zeros(size(obj.reference)),[x y],'segment');
+            hypo1 = hypo1.rotateDeg(obj.angleDeg);
+            obj.hypo1 = hypo1.translate(obj.reference);
+            % hypotenuse 2
+            x = -obj.length/2 - obj.refoffset(1);
+            y = -obj.width/2 - obj.refoffset(2);
+            hypo2 = line2d(zeros(size(obj.reference)),[x y],'segment');
+            hypo2 = hypo2.rotateDeg(obj.angleDeg);
+            obj.hypo2 = hypo2.translate(obj.reference);
+            % hypotenuse 3
+            x = -obj.length/2 - obj.refoffset(1);
+            y = obj.width/2 - obj.refoffset(2);
+            hypo3 = line2d(zeros(size(obj.reference)),[x y],'segment');
+            hypo3 = hypo3.rotateDeg(obj.angleDeg);
+            obj.hypo3 = hypo3.translate(obj.reference);
+            % hypotenuse 4
+            x = obj.length/2 - obj.refoffset(1);
+            y = obj.width/2 - obj.refoffset(2);
+            hypo4 = line2d(zeros(size(obj.reference)),[x y],'segment');
+            hypo4 = hypo4.rotateDeg(obj.angleDeg);
+            obj.hypo4 = hypo4.translate(obj.reference);
+        end
+                
+        function obj = setCorners(obj)
+            obj.c1 = obj.hypo1.point2;
+            obj.c2 = obj.hypo2.point2;
+            obj.c3 = obj.hypo3.point2;
+            obj.c4 = obj.hypo4.point2;
+        end
+        
+        function obj = setSides(obj)
+            obj.side12 = line2d(obj.c1,obj.c2,'segment');
+            obj.side23 = line2d(obj.c2,obj.c3,'segment');
+            obj.side34 = line2d(obj.c3,obj.c4,'segment');
+            obj.side41 = line2d(obj.c4,obj.c1,'segment');
         end
         
         % find the corner with the minimum X coordinate. return the corner
         % as well as the index of the corner (1-4)
         function [c,Ic] = minX(obj)
-            [xmin,Ic] = min([obj.c1(1) obj.c2(1) obj.c3(1) obj.c4(1)]);
-            switch Ic
-                case 1
-                    c = obj.c1;
-                case 2
-                    c = obj.c2;
-                case 3
-                    c = obj.c3;
-                case 4
-                    c = obj.c4;
-            end
+            x = [obj.c1(:,1) obj.c2(:,1) obj.c3(:,1) obj.c4(:,1)];
+            y = [obj.c1(:,2) obj.c2(:,2) obj.c3(:,2) obj.c4(:,2)];
+            [xmin,Ic] = min(x,[],2);
+            rows = (1:size(x,1))';
+            linearInd = sub2ind(size(x),rows,Ic);
+            c = [x(linearInd) y(linearInd)];
         end
         
         % find the corner with the maximum X coordinate. return the corner
         % as well as the index of the corner (1-4)
         function [c,Ic] = maxX(obj)
-            [xmax,Ic] = max([obj.c1(1) obj.c2(1) obj.c3(1) obj.c4(1)]);
-            switch Ic
-                case 1
-                    c = obj.c1;
-                case 2
-                    c = obj.c2;
-                case 3
-                    c = obj.c3;
-                case 4
-                    c = obj.c4;
-            end
+            x = [obj.c1(:,1) obj.c2(:,1) obj.c3(:,1) obj.c4(:,1)];
+            y = [obj.c1(:,2) obj.c2(:,2) obj.c3(:,2) obj.c4(:,2)];
+            [xmin,Ic] = max(x,[],2);
+            rows = (1:size(x,1))';
+            linearInd = sub2ind(size(x),rows,Ic);
+            c = [x(linearInd) y(linearInd)];
         end
         
         % find the corner with the minimum Y coordinate. return the corner
         % as well as the index of the corner (1-4)
         function [c,Ic] = minY(obj)
-            [ymin,Ic] = min([obj.c1(2) obj.c2(2) obj.c3(2) obj.c4(2)]);
-            switch Ic
-                case 1
-                    c = obj.c1;
-                case 2
-                    c = obj.c2;
-                case 3
-                    c = obj.c3;
-                case 4
-                    c = obj.c4;
-            end
+            x = [obj.c1(:,1) obj.c2(:,1) obj.c3(:,1) obj.c4(:,1)];
+            y = [obj.c1(:,2) obj.c2(:,2) obj.c3(:,2) obj.c4(:,2)];
+            [xmin,Ic] = min(y,[],2);
+            rows = (1:size(x,1))';
+            linearInd = sub2ind(size(x),rows,Ic);
+            c = [x(linearInd) y(linearInd)];
         end
         
         % find the corner with the maximum Y coordinate. return the corner
         % as well as the index of the corner (1-4)
         function [c,Ic] = maxY(obj)
-            [ymax,Ic] = max([obj.c1(2) obj.c2(2) obj.c3(2) obj.c4(2)]);
-            switch Ic
-                case 1
-                    c = obj.c1;
-                case 2
-                    c = obj.c2;
-                case 3
-                    c = obj.c3;
-                case 4
-                    c = obj.c4;
-            end
+            x = [obj.c1(:,1) obj.c2(:,1) obj.c3(:,1) obj.c4(:,1)];
+            y = [obj.c1(:,2) obj.c2(:,2) obj.c3(:,2) obj.c4(:,2)];
+            [xmin,Ic] = max(y,[],2);
+            rows = (1:size(x,1))';
+            linearInd = sub2ind(size(x),rows,Ic);
+            c = [x(linearInd) y(linearInd)];
         end
         
         % get a corner of the box given its index
         function c = getCorner(obj,Ic)
-            switch Ic
-                case 1
-                    c = obj.c1;
-                case 2
-                    c = obj.c2;
-                case 3
-                    c = obj.c3;
-                case 4
-                    c = obj.c4;
-                otherwise
-                    error('only 4 corners in box2d')
+            if any(Ic>4)
+                error('only 4 corners in a box2d')
             end
+            % if input index is scalar, upgrade it to a vector if needed
+            if isscalar(Ic)
+                Ic = repmat(Ic,size(obj.reference(:,1)));
+            end
+            x = [obj.c1(:,1) obj.c2(:,1) obj.c3(:,1) obj.c4(:,1)];
+            y = [obj.c1(:,2) obj.c2(:,2) obj.c3(:,2) obj.c4(:,2)];
+            if length(Ic)==1
+                Ic = repmat(Ic,size(x,1),1);
+            end
+            rows = (1:size(x,1))';
+            linearInd = sub2ind(size(x),rows,Ic);
+            c = [x(linearInd) y(linearInd)];
         end
         
         % get a side of the box given its index
         function side = getSide(obj,Is)
-            switch Is
-                case 1
-                    side = obj.side12;
-                case 2
-                    side = obj.side23;
-                case 3
-                    side = obj.side34;
-                case 4
-                    side = obj.side41;
-                otherwise
-                    error('only 4 sides in box2d')
+            if any(Is>4)
+                error('only 4 sides in a box2d')
             end
-        end
-        
-        % rotate the box around its center or poi by angle theta radians
-        function obj = rotateRad(obj,theta)
-            if obj.usepoi
-                cc1 = line2d(obj.poi,obj.c1).rotateRad(theta);
-                cc2 = line2d(obj.poi,obj.c2).rotateRad(theta);
-                cc3 = line2d(obj.poi,obj.c3).rotateRad(theta);
-                cc4 = line2d(obj.poi,obj.c4).rotateRad(theta);
-            else
-                cc1 = line2d(obj.center,obj.c1).rotateRad(theta);
-                cc2 = line2d(obj.center,obj.c2).rotateRad(theta);
-                cc3 = line2d(obj.center,obj.c3).rotateRad(theta);
-                cc4 = line2d(obj.center,obj.c4).rotateRad(theta);
+            % if input index is scalar, upgrade it to a vector if needed
+            if isscalar(Is)
+                Is = repmat(Is,size(obj.reference(:,1)));
             end
-            obj.c1 = cc1.point2;
-            obj.c2 = cc2.point2;
-            obj.c3 = cc3.point2;
-            obj.c4 = cc4.point2;
+            % first point of line
+            x = [obj.side12.point1(:,1) obj.side23.point1(:,1) obj.side34.point1(:,1) obj.side41.point1(:,1)];
+            y = [obj.side12.point1(:,2) obj.side23.point1(:,2) obj.side34.point1(:,2) obj.side41.point1(:,2)];
+            rows = (1:size(x,1))';
+            linearInd = sub2ind(size(x),rows,Is);
+            point1 = [x(linearInd) y(linearInd)];
+            % second point of line
+            x = [obj.side12.point2(:,1) obj.side23.point2(:,1) obj.side34.point2(:,1) obj.side41.point2(:,1)];
+            y = [obj.side12.point2(:,2) obj.side23.point2(:,2) obj.side34.point2(:,2) obj.side41.point2(:,2)];
+            rows = (1:size(x,1))';
+            linearInd = sub2ind(size(x),rows,Is);
+            point2 = [x(linearInd) y(linearInd)];
+            % reconstruct the selected sides
+            side = line2d(point1,point2,'segment');
         end
-        
-        % rotate the box around its center or poi by angle theta degrees
-        function obj = rotateDeg(obj,theta)
-            obj = rotateRad(obj,theta*pi/180);
-        end
-        
-        % translate the box by a vector offset
-        function obj = translate(obj,offset)
-            if length(offset)~=2
-                error('offset must be a 1x2 vector')
-            end
-            obj.center = obj.center + offset;
-            obj.c1 = obj.c1 + offset;
-            obj.c2 = obj.c2 + offset;
-            obj.c3 = obj.c3 + offset;
-            obj.c4 = obj.c4 + offset;
+                
+        % find the smallest distance from a box2d to an arbitrary point.
+        % the function does not check to see whether the point is inside
+        % the box
+        function dist = distToPoint(obj,point)
+            dist12 = obj.side12.distToPoint(point);
+            dist23 = obj.side23.distToPoint(point);
+            dist34 = obj.side34.distToPoint(point);
+            dist41 = obj.side41.distToPoint(point);
+            [dist,Imin] = min([dist12 dist23 dist34 dist41],[],2);
         end
         
         % plot a box2d
         function plot(obj,varargin)
-            X = [obj.c1(1) obj.c2(1) obj.c3(1) obj.c4(1) obj.c1(1)]';
-            Y = [obj.c1(2) obj.c2(2) obj.c3(2) obj.c4(2) obj.c1(2)]';
-            plot(X,Y,varargin{:})
-            hold on
-            plot(obj.center(1),obj.center(2),'.')
-            if obj.usepoi
-                plot(obj.poi(1),obj.poi(2),'s')
-            end
-            plot(obj.c1(1),obj.c1(2),'.')
-            axis equal
-        end
-    end
-    
-    % static methods
-    methods (Static)
-        % minimum distance between two boxes calculated using the rotating
-        % calipers method.  The minimum distance may be
-        % between two corners, a corner and a side, or two non-corner
-        % points on a side.  the maximum distance is guaranteed to be
-        % between two corners.  Because of that, this method is probably
-        % not the most efficient method for calculating maximum distance.
-        % Assume that one box is not fully enclosed by the other
-        function [dist,collision,ends] = distance(box1,box2,show)
-            if ~isa(box1,'box2d') || ~isa(box2,'box2d')
-                error('must supply box2d objects as input')
-            end
-            if nargin<3
-                show = false;
-            end
-            distv = NaN(1,20); % initialize distance vector
-            sideofv = NaN(1,20); % initialize sideof vector
-            obj1 = cell(1,20); % initialize object 1 cell array
-            obj2 = cell(1,20); % initialize object 2 cell array
-            count = 1; % initialize count
-            % initialize caliper on first box at minimum Y point
-            [c1,Ic1] = minY(box1);
-            side1 = box1.getSide(Ic1);
-            side1_init = side1;
-            caliper1 = line2d(c1,c1-[1 0],'segment');
-            % initialize caliper on second box at maximum Y point
-            [c2,Ic2] = maxY(box2);
-            side2 = box2.getSide(Ic2);
-            side2_init = side2;
-            caliper2 = line2d(c2,c2+[1 0],'segment');
-            % initialize distance between calipers
-            isParallel1 = line2d.parallel(caliper1,side1);
-            isParallel2 = line2d.parallel(caliper2,side2);
-            if isParallel1 && isParallel2
-                % both calipers are parallel to sides
-                distv(count) = line2d.distSegmentToSegmentParallel(caliper1,caliper2);
-                obj1{count} = caliper1;
-                obj2{count} = caliper2;
-            elseif isParallel1
-                % caliper 1 is parallel to a side
-                distv(count) = distToPoint(caliper1,c2);
-                obj1{count} = caliper1;
-                obj2{count} = c2;
-            elseif isParallel2
-                % caliper 2 is parallel to a side
-                distv(count) = distToPoint(caliper2,c1);
-                obj1{count} = c1;
-                obj2{count} = caliper2;
-            else
-                % neither caliper is parallel to a side
-                distv(count) = length(line2d(c1,c2));
-                obj1{count} = c1;
-                obj2{count} = c2;
-            end
-            % keep track of relative location of caliper 2 to caliper 1
-            sideofv(count) = side(caliper1,caliper2.point1);
-            if show
-                NewFigure('box2d: distance');
-                plot(box1)
-                plot(caliper1,'r')
+            n1 = size(obj.reference,1);
+            if n1==1
+                X = [obj.c1(1) obj.c2(1) obj.c3(1) obj.c4(1) obj.c1(1)]';
+                Y = [obj.c1(2) obj.c2(2) obj.c3(2) obj.c4(2) obj.c1(2)]';
+                plot(X,Y,varargin{:})
                 hold on
-                plot(box2)
-                plot(caliper2,'r')
-%                 pause(2)
-            end
-            % begin loop to rotate calipers around boxes
-            while true
-                count = count + 1;
-                % find the next side encountered by rotating caliper CW
-                % assume the included angle is acute
-                % and calculate the distance between calipers
-                % as well as the relative location
-                ang1 = line2d.angleIncludedDeg(side1,caliper1);
-                ang2 = line2d.angleIncludedDeg(side2,caliper2);
-                if abs(ang1-ang2)<box2d.TOL % calipers are on parallel sides
-                    if show, disp('parallel'), end
-                    if ang1<box2d.TOL % caliper is on a side
-                        % update side 1
-                        Ic1 = Ic1 + 1;
-                        if Ic1>4
-                            Ic1 = 1;
-                        end
-                        side1 = box1.getSide(Ic1);
-                        % update side 2
-                        Ic2 = Ic2 + 1;
-                        if Ic2>4
-                            Ic2 = 1;
-                        end
-                        side2 = box2.getSide(Ic2);
-                    end
-                    % move calipers to current sides
-                    caliper1 = side1;
-                    caliper2 = side2;
-                    % find distance between parallel segments
-                    dist = line2d.distSegmentToSegmentParallel(caliper1,caliper2);
-                    obj1{count} = caliper1;
-                    obj2{count} = caliper2;
-                elseif ang1<box2d.TOL % caliper 1 is on a side
-                    if show, disp('caliper 1 on a side, move caliper 2 to next side'), end
-                    caliper1 = caliper1.flipDirection.rotateDeg(180-ang2);
-                    caliper2 = side2;
-                    dist = distToPoint(caliper2,caliper1.point1);
-                    obj1{count} = caliper1.point1;
-                    obj2{count} = caliper2;
-                    % update side 1
-                    Ic1 = Ic1 + 1;
-                    if Ic1>4
-                        Ic1 = 1;
-                    end
-                    side1 = box1.getSide(Ic1);
-                elseif ang2<box2d.TOL % caliper 2 is on a side
-                    if show, disp('caliper 2 on a side, move caliper 1 to next side'), end
-                    caliper1 = side1;
-                    caliper2 = caliper2.flipDirection.rotateDeg(180-ang1);
-                    dist = distToPoint(caliper1,caliper2.point1);
-                    obj1{count} = caliper1;
-                    obj2{count} = caliper2.point1;
-                    % update side 2
-                    Ic2 = Ic2 + 1;
-                    if Ic2>4
-                        Ic2 = 1;
-                    end
-                    side2 = box2.getSide(Ic2);
-                elseif ang1<ang2 % caliper 1 is closer to next side
-                    if show, disp('caliper 1 next'), end
-                    caliper1 = side1;
-                    caliper2 = caliper2.rotateDeg(-ang1);
-                    dist = distToPoint(caliper1,caliper2.point1);
-                    obj1{count} = caliper1;
-                    obj2{count} = caliper2.point1;
-                elseif ang1>ang2 % caliper 2 is closer to next side
-                    if show, disp('caliper 2 next'), end
-                    caliper1 = caliper1.rotateDeg(-ang2);
-                    caliper2 = side2;
-                    dist = distToPoint(caliper2,caliper1.point1);
-                    obj1{count} = caliper1.point1;
-                    obj2{count} = caliper2;
-                else % whoops, unexpected condition!
-                    keyboard
-                end
-                % plot boxes if show is true
-                if show
-                    NewFigure('box2d: distance');
-                    plot(box1)
-                    plot(caliper1,'r')
-                    hold on
-                    plot(box2)
-                    plot(caliper2,'r')
-%                     pause(2)
-                end
-                % calipers should always be parallel to each other
-                if ~line2d.parallel(caliper1,caliper2)                   
-                    error('box2d: calipers not parallel!')
-                end
-                % add distance to its vector
-                distv(count) = dist;
-                % add relaive location of caliper 2 to its vector
-                sideofv(count) = side(caliper1,caliper2.point1);
-                % test for passing initial conditions
-                if line2d.equals(side1,side1_init) && length(distv(~isnan(distv)))>4
-                    if show, disp('side 1 match. done'), end
-                    break
-                end
-                if line2d.equals(side2,side2_init) && length(distv(~isnan(distv)))>4
-                    if show, disp('side 2 match. done'), end
-                    break
-                end
-            end
-            % test for collision between the boxes
-            nz = sideofv(~isnan(sideofv) & sideofv~=0);
-            if all(nz<0) || all(nz>0) % collision
-                collision = true;
-            else % no collision
-                collision = false;
-            end
-            % return the minimun distance
-            % assume that one box is not fully
-            % enclosed by the other
-            if collision
-                [dist,Idist] = min(fliplr(distv));
-                Idist = length(distv)-Idist+1;
-                dist = 0;
+                plot(obj.center(1),obj.center(2),'o')
+                plot(obj.reference(1),obj.reference(2),'s')
+                plot(obj.c1(1),obj.c1(2),'*')
+                axis equal
             else
-                [dist,Idist] = min(fliplr(distv));
-                Idist = length(distv)-Idist+1;
-            end
-            % return the objects (point or line) that bound the distance
-            ends = {obj1{Idist} obj2{Idist}};
-            % plot the distance line if show is true
-            if show
-                isLine1 = isa(ends{1},'line2d');
-                isLine2 = isa(ends{2},'line2d');
-                if isLine1 && isLine2
-                    [dist,end1,end2] = line2d.distSegmentToSegmentParallel(ends{1},ends{2});
-                    if all(isnan(end1)) && all(isnan(end2))
-                        dline = intersectionPerp(ends{2},ends{1}.point1);
-                    elseif all(isnan(end1))
-                        dline = intersectionPerp(ends{1},end2);
-                        dline = dline.flipDirection;
-                    elseif all(isnan(end2))
-                        dline = intersectionPerp(ends{2},end1);
-                    else
-                        dline = line2d(end1,end2);
-                    end
-                elseif isLine1
-                    [dist,end1] = distToPoint(ends{1},ends{2}); % ends{2} is a point
-                    if all(isnan(end1))
-                        dline = intersectionPerp(ends{1},ends{2});
-                        dline = dline.flipDirection;
-                    else
-                        dline = line2d(end1,ends{2});
-                    end
-                elseif isLine2
-                    [dist,end2] = distToPoint(ends{2},ends{1}); % ends{1} is a point
-                    if all(isnan(end2))
-                        dline = intersectionPerp(ends{2},ends{1});
-                    else
-                        dline = line2d(ends{1},end2);
-                    end
-                else
-                    dline = line2d(ends{1},ends{2});
+                hold on
+                for idx = 1:n1
+                    X = [obj.c1(idx,1) obj.c2(idx,1) obj.c3(idx,1) obj.c4(idx,1) obj.c1(idx,1)]';
+                    Y = [obj.c1(idx,2) obj.c2(idx,2) obj.c3(idx,2) obj.c4(idx,2) obj.c1(idx,2)]';
+                    plot(X,Y,varargin{:})
+                    hold on
+                    plot(obj.center(idx,1),obj.center(idx,2),'o')
+                    plot(obj.reference(idx,1),obj.reference(idx,2),'s')
+                    plot(obj.c1(idx,1),obj.c1(idx,2),'*')
+                    axis equal
                 end
-                plot(dline,'k')
-%                 pause(5)
             end
         end
         
-        % find critical support lines between two box2ds
-        function csl = criticalSupportLines(box1,box2,show)
-            if ~isa(box1,'box2d') || ~isa(box2,'box2d')
-                error('must supply box2d objects as input')
+        function plotn(obj,n,varargin)
+            n1 = size(obj.reference,1);
+            if n1==1
+                idx = 1;
+            elseif n1<n
+                idx = 1:n1;
+            else
+                factor = int32(n1/n);
+                idx = 1:factor:n*factor;
             end
-            if nargin<3
-                show = false;
-            end
-            box2d.TOL = 0.03; % testing for parallel sides needs a tolerance
-            count = 1; % initialize count
-            % initialize caliper on first box at minimum Y point
-            [c1,Ic1] = minY(box1);
-            Ic1prev = Ic1 - 1;
-            if Ic1prev<1, Ic1prev=4; end
-            Ic1next = Ic1 + 1;
-            if Ic1next>4, Ic1next=1; end
-            side1 = box1.getSide(Ic1);
-            side1_init = side1;
-            caliper1 = line2d(c1,c1-[1 0],'segment');
-            % initialize caliper on second box at maximum Y point
-            [c2,Ic2] = maxY(box2);
-            Ic2prev = Ic2 - 1;
-            if Ic2prev<1, Ic2prev=4; end
-            Ic2next = Ic2 + 1;
-            if Ic2next>4, Ic2next=1; end
-            side2 = box2.getSide(Ic2);
-            side2_init = side2;
-            caliper2 = line2d(c2,c2+[1 0],'segment');
-            % initialize line between calipers and test for csl
-            csl = [];
-            line = line2d(c1,c2,'line');
-            s1 = [side(line,box1.getCorner(Ic1prev)) side(line,box1.getCorner(Ic1next))];
-            s2 = [side(line,box2.getCorner(Ic2prev)) side(line,box2.getCorner(Ic2next))];
-            if (s1(1)*s1(2)>0) && (s2(1)*s2(2)>0) && (s1(1)*s2(1)<0)
-                csl = [csl line];
-            end
-            % plot the box if show is true
-            if show
-                NewFigure('box2d: csl');
-                plot(box1)
-                plot(caliper1,'r')
+            hold on
+            for i = 1:length(idx)
+                X = [obj.c1(idx(i),1) obj.c2(idx(i),1) obj.c3(idx(i),1) obj.c4(idx(i),1) obj.c1(idx(i),1)]';
+                Y = [obj.c1(idx(i),2) obj.c2(idx(i),2) obj.c3(idx(i),2) obj.c4(idx(i),2) obj.c1(idx(i),2)]';
+                plot(X,Y,varargin{:})
                 hold on
-                plot(box2)
-                plot(caliper2,'r')
-%                 pause(2)
+                plot(obj.center(idx(i),1),obj.center(idx(i),2),'o')
+                plot(obj.reference(idx(i),1),obj.reference(idx(i),2),'s')
+                plot(obj.c1(idx(i),1),obj.c1(idx(i),2),'*')
+                axis equal
             end
-            % begin loop to rotate calipers around boxes
-            while true
-                count = count + 1;
-                % find the next side encountered by rotating caliper CW
-                % assume the included angle is acute
-                % and calculate the distance between calipers
-                % as well as the relative location
-                ang1 = line2d.angleIncludedDeg(side1,caliper1);
-                ang2 = line2d.angleIncludedDeg(side2,caliper2);
-                if abs(ang1-ang2)<box2d.TOL % calipers are on parallel sides
-                    if show, disp('parallel'), end
-                    if ang1<box2d.TOL % caliper is on a side
-                        % update side 1
-                        Ic1 = Ic1 + 1;
-                        if Ic1>4
-                            Ic1 = 1;
-                        end
-                        side1 = box1.getSide(Ic1);
-                        % update side 2
-                        Ic2 = Ic2 + 1;
-                        if Ic2>4
-                            Ic2 = 1;
-                        end
-                        side2 = box2.getSide(Ic2);
-                    end
-                    % move calipers to current sides
-                    caliper1 = side1;
-                    caliper2 = side2;
-                elseif ang1<box2d.TOL % caliper 1 is on a side
-                    if show, disp('caliper 1 on a side, move caliper 2 to next side'), end
-                    caliper1 = caliper1.flipDirection.rotateDeg(180-ang2);
-                    caliper2 = side2;
-                    % update side 1
-                    Ic1 = Ic1 + 1;
-                    if Ic1>4
-                        Ic1 = 1;
-                    end
-                    side1 = box1.getSide(Ic1);
-                elseif ang2<box2d.TOL % caliper 2 is on a side
-                    if show, disp('caliper 2 on a side, move caliper 1 to next side'), end
-                    caliper1 = side1;
-                    caliper2 = caliper2.flipDirection.rotateDeg(180-ang1);
-                    % update side 2
-                    Ic2 = Ic2 + 1;
-                    if Ic2>4
-                        Ic2 = 1;
-                    end
-                    side2 = box2.getSide(Ic2);
-                elseif ang1<ang2 % caliper 1 is closer to next side
-                    if show, disp('caliper 1 next'), end
-                    caliper1 = side1;
-                    caliper2 = caliper2.rotateDeg(-ang1);
-                elseif ang1>ang2 % caliper 2 is closer to next side
-                    if show, disp('caliper 2 next'), end
-                    caliper1 = caliper1.rotateDeg(-ang2);
-                    caliper2 = side2;
-                else % whoops, unexpected condition!
-                    keyboard
-                end
-                % update prev & next corners, line, and test for csl
-                Ic1prev = Ic1 - 1;
-                if Ic1prev<1, Ic1prev=4; end
-                Ic1next = Ic1 + 1;
-                if Ic1next>4, Ic1next=1; end
-                Ic2prev = Ic2 - 1;
-                if Ic2prev<1, Ic2prev=4; end
-                Ic2next = Ic2 + 1;
-                if Ic2next>4, Ic2next=1; end
-                line = line2d(box1.getCorner(Ic1),box2.getCorner(Ic2),'line');
-                s1 = [side(line,box1.getCorner(Ic1prev)) side(line,box1.getCorner(Ic1next))];
-                s2 = [side(line,box2.getCorner(Ic2prev)) side(line,box2.getCorner(Ic2next))];
-                if (s1(1)*s1(2)>0) && (s2(1)*s2(2)>0) && (s1(1)*s2(1)<0)
-                    if max(size(csl))==1
-                        if ~line2d.parallel(csl(1),line)
-                            csl = [csl line];
-                        end
-                    else
-                        csl = [csl line];
-                    end
-                end
-                % plot boxes if show is true
-                if show
-                    NewFigure('box2d: csl');
-                    plot(box1)
-                    plot(caliper1,'r')
-                    hold on
-                    plot(box2)
-                    plot(caliper2,'r')
-                    plot(line,'y')
-                    try
-                    for i = 1:max(size(csl))
-                        plot(csl(i),'c')
-                    end
-                    catch
-                        keyboard
-                    end
-%                     pause(2)
-                end
-                % calipers should always be parallel to each other
-                if ~line2d.parallel(caliper1,caliper2)
-                    error('box2d: calipers not parallel!')
-                end
-                % test for passing initial conditions
-                if max(size(csl))==2
-                    if show, disp('two critical support lines found. done.'), end
-                    break
-                end
+        end
+        
+        function ploti(obj,i,varargin)
+            n1 = size(obj.reference,1);
+            if islogical(i)
+                idx = find(i);
+            else
+                idx = i;
+            end
+            if max(idx)>n1
+                error('ploti index out of range')
+            end
+            hold on
+            for i = 1:length(idx)
+                X = [obj.c1(idx(i),1) obj.c2(idx(i),1) obj.c3(idx(i),1) obj.c4(idx(i),1) obj.c1(idx(i),1)]';
+                Y = [obj.c1(idx(i),2) obj.c2(idx(i),2) obj.c3(idx(i),2) obj.c4(idx(i),2) obj.c1(idx(i),2)]';
+                plot(X,Y,varargin{:})
+                hold on
+                plot(obj.center(idx(i),1),obj.center(idx(i),2),'o')
+                plot(obj.reference(idx(i),1),obj.reference(idx(i),2),'s')
+                plot(obj.c1(idx(i),1),obj.c1(idx(i),2),'*')
+                axis equal
             end
         end        
     end
