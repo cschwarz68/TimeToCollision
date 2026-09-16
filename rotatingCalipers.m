@@ -68,7 +68,7 @@ classdef rotatingCalipers
         
         % get a subset of the object
         function one = getone(obj,idx)
-            if idx>obj.cal1.cal.count;
+            if idx>obj.cal1.cal.count
                 error('index greater than object count')
             end
             one = rotatingCalipers(obj.cal1.box.getone(idx),obj.cal2.box.getone(idx));
@@ -232,6 +232,19 @@ classdef rotatingCalipers
             between = between1 | between2;
         end
         
+        function [dist,dline] = distance(obj)
+            if nargin<2
+                show = false;
+            end
+            if ~obj.done
+                obj = obj.resetCalculations;
+                obj = obj.rotate;
+            end
+            [dist,dline] = obj.minDistance;
+            intersection = obj.intersection;
+            dist(intersection) = 0;
+        end
+        
         function [ttc,tca,dist,dist_tca,intersection,dline] = timeToCollision(obj,show)
             if nargin<2
                 show = false;
@@ -261,12 +274,19 @@ classdef rotatingCalipers
             % by being contiguous points in time.  i'm not sure how valid
             % this assumption will be as a general use case
             if length(tca)>3
+                tca_bak = tca;
                 tca = DropOutlierByPercentile(tca);
                 if any(isnan(tca))
                     disp('interpolating tca vector')
                     f = (1:length(tca))';
                     isValid = ~isnan(tca);
-                    tca = interp1(f(isValid),tca(isValid),f,'linear','extrap');
+                    try
+                        tca = interp1(f(isValid),tca(isValid),f,'linear','extrap');
+                    catch
+                        f = (1:length(tca_bak))';
+                        isValid = ~isnan(tca_bak);
+                        tca = interp1(f(isValid),tca_bak(isValid),f,'linear','extrap');
+                    end
                 end
             end
             % find the predicted miss distance by moving the boxes to their
