@@ -137,7 +137,7 @@ classdef line2d
         
         % get a subset of the object
         function one = getone(obj,idx)
-            if idx>obj.count
+            if max(idx)>obj.count
                 error('index greater than object count')
             end
             one = line2d(obj.point1(idx,:),obj.point2(idx,:),obj.type);
