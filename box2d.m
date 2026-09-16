@@ -90,6 +90,9 @@ classdef box2d
         % the angle and reference point may both be arrays, but they need 
         % to have the same dimension
         function obj = setreference(obj,point)
+            if size(point,2)>2
+                point = point(:,1:2);
+            end
             obj.reference = point;
             if isempty(obj.angleDeg)
                 return
@@ -111,7 +114,7 @@ classdef box2d
             end
         end
         
-        % set the orientation of the box in radians.  the angle and
+        % set the orientation of the box in degrees.  the angle and
         % reference point may both be arrays, but they need to have the
         % same dimension
         function obj = setangleDeg(obj,angleDeg)
@@ -138,7 +141,7 @@ classdef box2d
         
         % get a subset of the object
         function one = getone(obj,idx)
-            if idx>size(obj.reference,1)
+            if max(idx)>size(obj.reference,1)
                 error('index greater than object count')
             end
             one = box2d(obj.length,obj.width,obj.refoffset);
